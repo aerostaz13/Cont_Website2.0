@@ -71,7 +71,7 @@ function genererTableProduits() {
  *    • Déterminer l’espace restant dans ces conteneurs réfrigérés (resteVolRef, restePdsRef).
  * 4) Remplir autant que possible les récipients réfrigérés avec des produits non réfrigérés :
  *    • Si remainDryVol ≤ resteVolRef et remainDryPds ≤ restePdsRef, alors tous les non réfrigérés
- *      tiennent dans les conteneurs réfrigérés restants → on n’a besoin d’aucun container sec.
+ *      tiennent dans les conteneurs réfrigérés restants → on n’a besoin d’aucun conteneur sec.
  *    • Sinon, calculer remainDryVol’ = remainDryVol − resteVolRef, remainDryPds’ = remainDryPds − restePdsRef,
  *      et passer à l’étape 5 avec ces restes.
  * 5) Si reste de non réfrigérés > 0 :
@@ -112,10 +112,10 @@ function traiterCalcul() {
   let htmlResultat = "";
   let resteVolRef = 0, restePdsRef = 0;
   if (totalRefVol > 0 || totalRefPds > 0) {
-    // 3a) Filtrer pour TC20R, TC40R, TC40HCR
+    // 3a) Filtrer pour TC20R, TC40R, TC40CHR (*** ici on corrige la faute : c'était "TC40HCR" ***)
     const contRef = conteneurs.filter(c => {
       const code = (c["NAME "] || "").trim();
-      return code === "TC20R" || code === "TC40R" || code === "TC40HCR";
+      return code === "TC20R" || code === "TC40R" || code === "TC40CHR";
     });
     const resRef = findOptimalContainers(totalRefVol, totalRefPds, contRef);
     // Conserver l’espace restant dans ces conteneurs R
@@ -149,10 +149,9 @@ function traiterCalcul() {
       remainDryVol = 0;
       remainDryPds = 0;
     } else {
-      // 4b) Sinon, on réduit remainDry par l’espace restant R (une partie du sec va dans R)
+      // 4b) Sinon, on réduit remainDry par l’espace restant R
       remainDryVol -= resteVolRef;
       remainDryPds -= restePdsRef;
-      // Si un de ces restes devient négatif, on le passe à zéro
       remainDryVol = Math.max(0, remainDryVol);
       remainDryPds = Math.max(0, remainDryPds);
     }
@@ -160,10 +159,10 @@ function traiterCalcul() {
 
   // 5) Si il reste du sec à embarquer (remainDry > 0) → chercher container(s) secs
   if (remainDryVol > 0 || remainDryPds > 0) {
-    // Filtrer TOUS les conteneurs non-R
+    // Filtrer TOUS les conteneurs non-R (*** ici on exclut TC40CHR, pas TC40HCR ***)
     const contDry = conteneurs.filter(c => {
       const code = (c["NAME "] || "").trim();
-      return code !== "TC20R" && code !== "TC40R" && code !== "TC40HCR";
+      return code !== "TC20R" && code !== "TC40R" && code !== "TC40CHR";
     });
     const resDry = findOptimalContainers(remainDryVol, remainDryPds, contDry);
     htmlResultat += formatResultMessage(
@@ -179,22 +178,23 @@ function traiterCalcul() {
 }
 
 /**
- * findOptimalContainers(totalVol, totalPds, availableContainers) :
- *   - totalVol, totalPds : besoins à couvrir (volumes, poids).
- *   - availableContainers : array d’objets conteneur (avec "NAME ", "Poids_max", "Capacite_plus_de_quatre", …).
+ * findOptimalContainers(totalVol, totalPds, availableContainers):
+ *   - totalVol, totalPds = besoins totaux à couvrir.
+ *   - availableContainers = array d’objets conteneur
+ *     (avec "NAME ", "Poids_max", "Capacite_plus_de_quatre", …).
  *
  * Algorithme :
  *   1. Créer list = [{ code, volCap, pdsCap }, …], trié par volCap asc, puis pdsCap asc.
  *   2. Chercher un unique conteneur qui couvre totalVol/totalPds,
  *      en minimisant d’abord (volCap - totalVol), puis (pdsCap - totalPds).
- *      Si trouvé, renvoyer { containers: [code], capVolume, capPoids, resteVolume, restePoids }.
+ *      Si on en trouve un, on renvoie { containers: [code], capVolume, capPoids, resteVolume, restePoids }.
  *   3. Sinon, tester toutes les paires (i ≤ j), calculer (volCap1+volCap2, pdsCap1+pdsCap2),
  *      ne garder que celles qui couvrent, et retenir la paire minimisant (volSum - totalVol),
- *      puis (pdsSum - totalPds). Si trouvé, renvoyer { containers: [code1,code2], … }.
+ *      puis (pdsSum - totalPds). Si on en trouve, on renvoie { containers: [code1,code2], … }.
  *   4. Sinon, prendre N exemplaires du plus grand conteneur (dernier de list) pour couvrir à la fois,
  *      en calculant nbByVol = ceil(totalVol / largest.volCap), nbByPds = ceil(totalPds / largest.pdsCap),
  *      nbNeeded = max(nbByVol, nbByPds), puis { containers: Array(nbNeeded).fill(largest.code), … }.
- *   5. Si list.length === 0, renvoyer objet contenant { error: "Aucun conteneur disponible..." }.
+ *   5. Si list.length === 0, on renvoie objet contenant { error: "Aucun conteneur dispo" }.
  */
 function findOptimalContainers(totalVol, totalPds, availableContainers) {
   // 1. Construire et trier `list`
@@ -236,7 +236,7 @@ function findOptimalContainers(totalVol, totalPds, availableContainers) {
     };
   }
 
-  // 3. PAIRES
+  // 3. Tester PAIRES
   let meilleurPair = null;
   for (let i = 0; i < list.length; i++) {
     for (let j = i; j < list.length; j++) {
@@ -297,9 +297,9 @@ function findOptimalContainers(totalVol, totalPds, availableContainers) {
 
 /**
  * formatResultMessage(titreCat, totalVol, totalPds, resultat)
- *   Construit le bloc HTML pour une catégorie (réfrigérée ou sec) :
- *   – titreCat : titre de la section (ex. “Conteneur réfrigéré…” ou “Conteneur sec…”)
- *   – totalVol, totalPds : besoins qu’on a effectivement passés à findOptimalContainers
+ *   Construit le bloc HTML pour une catégorie (réfrigéré ou sec) :
+ *   – titreCat : titre de la section
+ *   – totalVol, totalPds : besoins passés à findOptimalContainers
  *   – resultat : objet renvoyé par findOptimalContainers
  */
 function formatResultMessage(titreCat, totalVol, totalPds, resultat) {
