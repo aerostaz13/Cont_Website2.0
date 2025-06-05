@@ -1,16 +1,16 @@
 // main.js
 
-let produits = [];    // Array d'objets produits (contenant Référence, Nom, Poids_unité, Volume_unité, Refrigerer, ...)
-let conteneurs = [];  // Array d'objets conteneurs (contenant "NAME ", "ID ", Poids_max, Capacite_plus_de_quatre, Capacite_quatre_ou_moins, ...)
+let produits = [];    // Array d'objets produits (Référence, Nom, Poids_unité, Volume_unité, Refrigerer, ...)
+let conteneurs = [];  // Array d'objets conteneurs ("NAME ", "ID ", Poids_max, Capacite_plus_de_quatre, Capacite_quatre_ou_moins, ...)
 
 /**
- * Au chargement de la page : on récupère les JSON et on génère le tableau.
+ * Au chargement de la page : charger produits.json et conteneurs.json, puis générer le tableau.
  */
 window.addEventListener("DOMContentLoaded", async () => {
   try {
     const [respP, respC] = await Promise.all([
       fetch("produits.json"),
-      fetch("conteneurs.json"),
+      fetch("conteneurs.json")
     ]);
     if (!respP.ok || !respC.ok) {
       throw new Error("Impossible de charger les fichiers JSON.");
@@ -49,58 +49,64 @@ function genererTableProduits() {
 }
 
 /**
- * Lorsque l’utilisateur clique sur “Calculer”, on sépare réfrigérés / secs, on calcule les besoins,
- * puis on appelle findOptimalContainers() pour chaque catégorie et on affiche le résultat.
+ * Lors du clic “Calculer”, décider si on utilise des conteneurs réfrigérés ou non,
+ * puis chercher le(s) conteneur(s) optimal(aux) pour l’ensemble des produits.
  */
 function traiterCalcul() {
-  // 1. Calculer les totaux réfrigérés et secs
-  let totalRefPds = 0, totalRefVol = 0;
-  let totalDryPds = 0, totalDryVol = 0;
+  // 1. Calculer totaux pour tous les produits, et déterminer si au moins un est réfrigéré
+  let totalPdsAll = 0, totalVolAll = 0;
+  let hasRefrig = false;
 
   produits.forEach((prod, i) => {
     const qt = parseInt(document.getElementById(`quantite-${i}`).value, 10) || 0;
     if (qt <= 0) return;
     const poidsUn = parseFloat(prod["Poids_unité"]);
     const volUn   = parseFloat(prod["Volume_unité"]);
+    totalPdsAll += qt * poidsUn;
+    totalVolAll += qt * volUn;
     if (prod["Refrigerer"] == 1) {
-      totalRefPds += qt * poidsUn;
-      totalRefVol += qt * volUn;
-    } else {
-      totalDryPds += qt * poidsUn;
-      totalDryVol += qt * volUn;
+      hasRefrig = true;
     }
   });
 
-  const messages = [];
-
-  // 2. Si on a des produits réfrigérés : filtrer les conteneurs réfrigérés et trouver le(s) optimal(aux)
-  if (totalRefVol > 0 || totalRefPds > 0) {
-    const contRef = conteneurs.filter(c => {
-      const code = (c["NAME "] || "").trim();
-      return code === "TC20R" || code === "TC40R" || code === "TC40HCR";
-    });
-    const resultatRef = findOptimalContainers(totalRefVol, totalRefPds, contRef);
-    messages.push(formatResultMessage("Produits réfrigérés", totalRefVol, totalRefPds, resultatRef));
-  }
-
-  // 3. Si on a des produits secs : filtrer tous les autres conteneurs (non-R) et trouver le(s) optimal(aux)
-  if (totalDryVol > 0 || totalDryPds > 0) {
-    const contDry = conteneurs.filter(c => {
-      const code = (c["NAME "] || "").trim();
-      return code !== "TC20R" && code !== "TC40R" && code !== "TC40HCR";
-    });
-    const resultatDry = findOptimalContainers(totalDryVol, totalDryPds, contDry);
-    messages.push(formatResultMessage("Produits non réfrigérés", totalDryVol, totalDryPds, resultatDry));
-  }
-
-  // 4. Si aucune quantité n’a été entrée (somme de tous les volumes/poids est zéro), on affiche “Aucune quantité saisie.”
-  if (totalRefVol + totalRefPds + totalDryVol + totalDryPds === 0) {
+  // 2. Si aucune quantité n’a été saisie, afficher message
+  if (totalVolAll === 0 && totalPdsAll === 0) {
     afficherMessage({
       html: `<div class="message"><em>Aucune quantité saisie.</em></div>`
     });
-  } else {
-    afficherMessage({ html: messages.join("") });
+    return;
   }
+
+  // 3. Sélectionner la liste de conteneurs disponibles selon hasRefrig
+  let available;
+  let categorie;
+  if (hasRefrig) {
+    // Tous les produits (y compris non-réfrigérés) doivent aller dans un conteneur réfrigéré
+    available = conteneurs.filter(c => {
+      const code = (c["NAME "] || "").trim();
+      return code === "TC20R" || code === "TC40R" || code === "TC40HCR";
+    });
+    categorie = "Commande contenant au moins un produit réfrigéré";
+  } else {
+    // Aucun produit réfrigéré, on peut utiliser des conteneurs non-réfrigérés
+    available = conteneurs.filter(c => {
+      const code = (c["NAME "] || "").trim();
+      return code !== "TC20R" && code !== "TC40R" && code !== "TC40HCR";
+    });
+    categorie = "Produits non réfrigérés uniquement";
+  }
+
+  // 4. Trouver les conteneurs optimaux pour couvrir totalVolAll et totalPdsAll
+  const resultat = findOptimalContainers(totalVolAll, totalPdsAll, available);
+
+  // 5. Construire et afficher le message de résultat
+  const messageHTML = formatResultMessage(
+    categorie,
+    totalVolAll,
+    totalPdsAll,
+    resultat
+  );
+  afficherMessage({ html: messageHTML });
 }
 
 /**
@@ -113,10 +119,10 @@ function traiterCalcul() {
  * - capVolume : somme des capacités volume des conteneurs choisis.
  * - capPoids  : somme des capacités poids.
  * - resteVolume, restePoids : capVolume – besoins.
- * - error (optionnel) : si aucun conteneur dispo pour cette catégorie.
+ * - error (optionnel) : si aucun conteneur dispo dans cette catégorie.
  */
 function findOptimalContainers(totalVol, totalPds, availableContainers) {
-  // 1. Construire un tableau { code, volCap, pdsCap } et le trier par volCap croissant (puis pdsCap)
+  // 1. Construire un tableau { code, volCap, pdsCap } et trier par volCap croissant (puis pdsCap)
   const list = availableContainers
     .map(c => ({
       code:   (c["NAME "]  || "").trim(),
@@ -129,7 +135,7 @@ function findOptimalContainers(totalVol, totalPds, availableContainers) {
       return a.pdsCap - b.pdsCap;
     });
 
-  // 2. Essayer un CONTENEUR UNIQUE : on choisit celui qui minimise en priorité le gaspillage de VOLUME,
+  // 2. Essayer un CONTENEUR UNIQUE qui minimise d'abord le gaspillage de VOLUME,
   //    puis en cas d’égalité, le gaspillage de POIDS.
   let meilleurMono = null;
   for (let c of list) {
@@ -156,8 +162,8 @@ function findOptimalContainers(totalVol, totalPds, availableContainers) {
     };
   }
 
-  // 3. Essayer la PAIRE DE CONTENEURS qui minimise d’abord le gaspillage de VOLUME cumulé,
-  //    puis en cas d’égalité, le gaspillage de POIDS cumulé.
+  // 3. Essayer toutes les PAIRES de conteneurs qui minimisent d'abord le gaspillage de VOLUME,
+  //    puis, en cas d'égalité sur volume, le gaspillage de POIDS.
   let meilleurPair = null;
   for (let i = 0; i < list.length; i++) {
     for (let j = i; j < list.length; j++) {
@@ -173,11 +179,7 @@ function findOptimalContainers(totalVol, totalPds, availableContainers) {
           wasteVol < meilleurPair.wasteVol ||
           (wasteVol === meilleurPair.wasteVol && wastePds < meilleurPair.wastePds)
         ) {
-          meilleurPair = {
-            pair:     [c1, c2],
-            wasteVol,
-            wastePds
-          };
+          meilleurPair = { pair: [c1, c2], wasteVol, wastePds };
         }
       }
     }
@@ -193,16 +195,15 @@ function findOptimalContainers(totalVol, totalPds, availableContainers) {
     };
   }
 
-  // 4. Si on arrive ici, aucun conteneur unique NI aucune paire ne suffit.  
-  //    On prend donc N exemplaires du PLUS GRAND conteneur de la liste pour couvrir volume ET poids.
+  // 4. Si aucun conteneur unique ni paire ne suffit, on prend N exemplaires du plus grand conteneur
   if (list.length === 0) {
     return {
-      containers: [],
-      capVolume: 0,
-      capPoids:  0,
-      resteVolume: 0,
-      restePoids:  0,
-      error: "Aucun conteneur disponible dans cette catégorie."
+      containers:   [],
+      capVolume:    0,
+      capPoids:     0,
+      resteVolume:  0,
+      restePoids:   0,
+      error:        "Aucun conteneur disponible dans cette catégorie."
     };
   }
   const largest = list[list.length - 1];
@@ -213,20 +214,21 @@ function findOptimalContainers(totalVol, totalPds, availableContainers) {
   const totalCapVol = largest.volCap * nbNeeded;
   const totalCapPds = largest.pdsCap * nbNeeded;
   return {
-    containers:    Array(nbNeeded).fill(largest.code),
-    capVolume:     totalCapVol,
-    capPoids:      totalCapPds,
-    resteVolume:   parseFloat((totalCapVol - totalVol).toFixed(6)),
-    restePoids:    parseFloat((totalCapPds - totalPds).toFixed(3))
+    containers:   Array(nbNeeded).fill(largest.code),
+    capVolume:    totalCapVol,
+    capPoids:     totalCapPds,
+    resteVolume:  parseFloat((totalCapVol - totalVol).toFixed(6)),
+    restePoids:   parseFloat((totalCapPds - totalPds).toFixed(3))
   };
 }
 
 /**
  * formatResultMessage(titreCat, totalVol, totalPds, resultat)
- * Construit le bloc HTML pour une catégorie donnée :
- *    - titreCat : "Produits réfrigérés" ou "Produits non réfrigérés"
- *    - totalVol, totalPds : besoins à couvrir
- *    - resultat      : l’objet renvoyé par findOptimalContainers(...)
+ * Construit le bloc HTML pour la catégorie donnée :
+ *    - titreCat : "Commande contenant au moins un produit réfrigéré"
+ *                 ou "Produits non réfrigérés uniquement"
+ *    - totalVol, totalPds : besoins totaux à couvrir
+ *    - resultat : objet renvoyé par findOptimalContainers(...)
  */
 function formatResultMessage(titreCat, totalVol, totalPds, resultat) {
   let html = `<div class="message categorie">`;
