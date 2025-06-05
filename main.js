@@ -5,9 +5,9 @@ let conteneurs = [];  // Array d'objets conteneurs ("NAME ", "ID ", Poids_max, C
 
 /**
  * Au chargement de la page :
- *   1. Charger produits.json et conteneurs.json
- *   2. Générer le tableau des produits
- *   3. Brancher le bouton “Calculer” sur traiterCalcul()
+ *  1. Charger produits.json et conteneurs.json
+ *  2. Générer le tableau des produits
+ *  3. Brancher les boutons “Calculer” et “Reset”
  */
 window.addEventListener("DOMContentLoaded", async () => {
   try {
@@ -22,8 +22,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     conteneurs = await respC.json();
 
     genererTableProduits();
+
     document.getElementById("btn-calculer")
             .addEventListener("click", traiterCalcul);
+
+    // Bouton “Reset” : remet tout à zéro
+    document.getElementById("btn-reset")
+            .addEventListener("click", resetForm);
   } catch (err) {
     alert("Erreur au chargement des données : " + err.message);
     console.error(err);
@@ -43,8 +48,10 @@ function genererTableProduits() {
     tr.innerHTML = `
       <td>${prod["Référence"]}</td>
       <td>${prod["Nom"] || ""}</td>
-      <td>${parseFloat(prod["Poids_unité"]).toLocaleString("fr-FR", { minimumFractionDigits: 3 })}</td>
-      <td>${parseFloat(prod["Volume_unité"]).toLocaleString("fr-FR", { minimumFractionDigits: 6 })}</td>
+      <td>${parseFloat(prod["Poids_unité"])
+              .toLocaleString("fr-FR", { minimumFractionDigits: 3 })}</td>
+      <td>${parseFloat(prod["Volume_unité"])
+              .toLocaleString("fr-FR", { minimumFractionDigits: 6 })}</td>
       <td style="text-align: center;">${prod["Refrigerer"] == 1 ? "✅" : "—"}</td>
       <td>
         <input
@@ -62,26 +69,23 @@ function genererTableProduits() {
 }
 
 /**
- * Lors du clic sur “Calculer le(s) conteneur(s) optimal(aux)” :
- * 1) Calcule totaux séparés pour réfrigérés et non réfrigérés.
- * 2) Si aucun produit total (Réfrig + Sec) → “Aucune quantité saisie.”
- * 3) Pour la partie réfrigérée (si présente) :
- *    • Trouver le(s) conteneur(s) réfrigéré(s) optimaux pour totalRefVol/totalRefPds.
- *    • Calculer leur capacité cumulée (volRefCapSum, pdsRefCapSum).
- *    • Déterminer l’espace restant dans ces conteneurs réfrigérés (resteVolRef, restePdsRef).
- * 4) Remplir autant que possible les récipients réfrigérés avec des produits non réfrigérés :
- *    • Si remainDryVol ≤ resteVolRef et remainDryPds ≤ restePdsRef, alors tous les non réfrigérés
- *      tiennent dans les conteneurs réfrigérés restants → on n’a besoin d’aucun conteneur sec.
- *    • Sinon, calculer remainDryVol’ = remainDryVol − resteVolRef, remainDryPds’ = remainDryPds − restePdsRef,
- *      et passer à l’étape 5 avec ces restes.
- * 5) Si reste de non réfrigérés > 0 :
- *    • Trouver le(s) conteneur(s) sec(s) optimaux pour remainDryVol’, remainDryPds’.
- * 6) Générer un seul affichage final : un bloc “Réfrigéré” (si applicable) et, au besoin, un bloc “Sec”.
+ * Quand l’utilisateur clique sur “Calculer le(s) conteneur(s) optimal(aux)” :
+ * 1) Calculer totalRefVol/totalRefPds (réfrigérés) et totalDryVol/totalDryPds (non-réfrigérés).
+ * 2) Si aucune quantité totale → “Aucune quantité saisie.”
+ * 3) Si (totalRefVol > 0 || totalRefPds > 0) → 
+ *       • Allouer un ou plusieurs containers réfrigérés pour couvrir TOTAL réfrigéré.
+ *       • Calculer l’espace libre (resteVolRef/restePdsRef) dans ces containers R.
+ *       • Tenter de mettre les non-réfrigérés dans cet espace libre.
+ *         – Si tout y tient → pas de container sec.
+ *         – Sinon → resteDryVol/resteDryPds = ce qui dépasse l’espace libre → 
+ *           allouer un ou plusieurs containers secs pour ce reste.
+ *   Sinon (aucun réfrigéré) → allouer un ou plusieurs containers secs pour COVER totalDryVol/totalDryPds.
+ * 4) Générer l’HTML final avec un bloc “Réfrigéré” (si applicable) et, le cas échéant, un bloc “Sec”.
  */
 function traiterCalcul() {
   // 1) Totaux séparés
-  let totalRefPds = 0, totalRefVol = 0;
-  let totalDryPds = 0, totalDryVol = 0;
+  let totalRefVol = 0, totalRefPds = 0;
+  let totalDryVol = 0, totalDryPds = 0;
 
   produits.forEach((prod, i) => {
     const qt = parseInt(document.getElementById(`quantite-${i}`).value, 10) || 0;
@@ -100,7 +104,7 @@ function traiterCalcul() {
   const totalVolAll = totalRefVol + totalDryVol;
   const totalPdsAll = totalRefPds + totalDryPds;
 
-  // 2) Si aucune quantité saisie
+  // 2) Si aucune quantité totale
   if (totalVolAll === 0 && totalPdsAll === 0) {
     afficherMessage({
       html: `<div class="message"><em>Aucune quantité saisie.</em></div>`
@@ -108,21 +112,22 @@ function traiterCalcul() {
     return;
   }
 
-  // 3) Gestion de la partie RÉFRIGÉRÉE (si totalRef > 0)
   let htmlResultat = "";
   let resteVolRef = 0, restePdsRef = 0;
+
+  // 3) Si on a une partie réfrigérée
   if (totalRefVol > 0 || totalRefPds > 0) {
-    // 3a) Filtrer pour TC20R, TC40R, TC40CHR (*** ici on corrige la faute : c'était "TC40HCR" ***)
+    // 3a) Filtrer pour ne garder que TC20R, TC40R, TC40CHR
     const contRef = conteneurs.filter(c => {
       const code = (c["NAME "] || "").trim();
       return code === "TC20R" || code === "TC40R" || code === "TC40CHR";
     });
     const resRef = findOptimalContainers(totalRefVol, totalRefPds, contRef);
-    // Conserver l’espace restant dans ces conteneurs R
+    // Conserver l’espace libre dans les containers R
     resteVolRef = resRef.resteVolume;
     restePdsRef = resRef.restePoids;
 
-    // Générer bloc HTML pour la partie réfrigérée
+    // Générer le bloc pour la partie réfrigérée
     htmlResultat += formatResultMessage(
       "Conteneur(s) réfrigéré(s) pour produits réfrigérés",
       totalRefVol,
@@ -131,25 +136,26 @@ function traiterCalcul() {
     );
   }
 
-  // 4) Essayer de mettre des produits non réfrigérés DANS l’espace restant des conteneurs R
+  // 4) Gérer la partie non-réfrigérée
   let remainDryVol = totalDryVol;
   let remainDryPds = totalDryPds;
+
+  // Si on a déjà alloué un container réfrigéré, on tente de loger du non-réfrigéré dedans
   if ((totalRefVol > 0 || totalRefPds > 0) && (totalDryVol > 0 || totalDryPds > 0)) {
-    // On a à la fois du réfrigéré et du sec
-    // 4a) Si tout le Sec tient dans l’espace restant R → plus besoin de container sec
+    // 4a) Si tout le sec tient dans l’espace libre des containers R
     if (remainDryVol <= resteVolRef && remainDryPds <= restePdsRef) {
-      // On affiche un petit message complémentaire
       htmlResultat += `
         <div class="message categorie">
           <div class="message-item titre">Remarque :</div>
-          <div class="message-item">Tous les produits non réfrigérés tiennent dans l’espace restant des conteneurs réfrigérés.</div>
+          <div class="message-item">
+            Tous les produits non réfrigérés tiennent dans l’espace restant des conteneurs réfrigérés.
+          </div>
         </div>
       `;
-      // Et on met remainDryVol/Pds à zéro pour ne pas calculer de conteneur sec
       remainDryVol = 0;
       remainDryPds = 0;
     } else {
-      // 4b) Sinon, on réduit remainDry par l’espace restant R
+      // 4b) Sinon, on réduit remainDry par la capacité restante R
       remainDryVol -= resteVolRef;
       remainDryPds -= restePdsRef;
       remainDryVol = Math.max(0, remainDryVol);
@@ -157,9 +163,9 @@ function traiterCalcul() {
     }
   }
 
-  // 5) Si il reste du sec à embarquer (remainDry > 0) → chercher container(s) secs
+  // 5) Si reste de non-réfrigérés > 0 → allouer un ou plusieurs containers secs
   if (remainDryVol > 0 || remainDryPds > 0) {
-    // Filtrer TOUS les conteneurs non-R (*** ici on exclut TC40CHR, pas TC40HCR ***)
+    // Filtrer TOUS les conteneurs non-réfrigérés
     const contDry = conteneurs.filter(c => {
       const code = (c["NAME "] || "").trim();
       return code !== "TC20R" && code !== "TC40R" && code !== "TC40CHR";
@@ -173,28 +179,32 @@ function traiterCalcul() {
     );
   }
 
-  // 6) Afficher le tout
+  // 6) Afficher le HTML complet
   afficherMessage({ html: htmlResultat });
 }
 
 /**
- * findOptimalContainers(totalVol, totalPds, availableContainers):
- *   - totalVol, totalPds = besoins totaux à couvrir.
- *   - availableContainers = array d’objets conteneur
+ * findOptimalContainers(totalVol, totalPds, availableContainers) :
+ *   - totalVol, totalPds : besoins à couvrir.
+ *   - availableContainers : array d’objets conteneur
  *     (avec "NAME ", "Poids_max", "Capacite_plus_de_quatre", …).
  *
- * Algorithme :
- *   1. Créer list = [{ code, volCap, pdsCap }, …], trié par volCap asc, puis pdsCap asc.
- *   2. Chercher un unique conteneur qui couvre totalVol/totalPds,
+ * Étapes :
+ *   1. Créer `list` = [{ code, volCap, pdsCap }, …], trié par volCap asc, puis pdsCap asc.
+ *   2. Chercher un unique conteneur qui couvre (totalVol, totalPds),
  *      en minimisant d’abord (volCap - totalVol), puis (pdsCap - totalPds).
- *      Si on en trouve un, on renvoie { containers: [code], capVolume, capPoids, resteVolume, restePoids }.
- *   3. Sinon, tester toutes les paires (i ≤ j), calculer (volCap1+volCap2, pdsCap1+pdsCap2),
- *      ne garder que celles qui couvrent, et retenir la paire minimisant (volSum - totalVol),
- *      puis (pdsSum - totalPds). Si on en trouve, on renvoie { containers: [code1,code2], … }.
- *   4. Sinon, prendre N exemplaires du plus grand conteneur (dernier de list) pour couvrir à la fois,
- *      en calculant nbByVol = ceil(totalVol / largest.volCap), nbByPds = ceil(totalPds / largest.pdsCap),
- *      nbNeeded = max(nbByVol, nbByPds), puis { containers: Array(nbNeeded).fill(largest.code), … }.
- *   5. Si list.length === 0, on renvoie objet contenant { error: "Aucun conteneur dispo" }.
+ *      Si trouvé → renvoyer { containers: [code], capVolume, capPoids, resteVolume, restePoids }.
+ *   3. Sinon, tester toutes les paires (i ≤ j) de `list`, en ne gardant que celles
+ *      dont (volCap1 + volCap2 ≥ totalVol) et (pdsCap1 + pdsCap2 ≥ totalPds), puis sélectionner
+ *      la paire minimisant (volSum - totalVol) puis (pdsSum - totalPds).
+ *      Si trouvé → renvoyer { containers: [code1, code2], … }.
+ *   4. Sinon, prendre N exemplaires du plus grand conteneur (dernier de `list`) pour couvrir
+ *      volume ET poids :
+ *        nbByVol = Math.ceil(totalVol / largest.volCap)
+ *        nbByPds = Math.ceil(totalPds / largest.pdsCap)
+ *        nbNeeded = Math.max(nbByVol, nbByPds)
+ *      → renvoyer { containers: Array(nbNeeded).fill(largest.code), … }.
+ *   5. Si `list.length === 0` → renvoyer `{ containers: [], capVolume:0, capPoids:0, resteVolume:0, restePoids:0, error: "Aucun conteneur disponible ..." }`.
  */
 function findOptimalContainers(totalVol, totalPds, availableContainers) {
   // 1. Construire et trier `list`
@@ -210,7 +220,7 @@ function findOptimalContainers(totalVol, totalPds, availableContainers) {
       return a.pdsCap - b.pdsCap;
     });
 
-  // 2. Conteneur UNIQUE
+  // 2. Chercher un conteneur UNIQUE
   let meilleurMono = null;
   for (let c of list) {
     if (c.volCap >= totalVol && c.pdsCap >= totalPds) {
@@ -236,7 +246,7 @@ function findOptimalContainers(totalVol, totalPds, availableContainers) {
     };
   }
 
-  // 3. Tester PAIRES
+  // 3. Chercher la meilleure PAIRE (i ≤ j)
   let meilleurPair = null;
   for (let i = 0; i < list.length; i++) {
     for (let j = i; j < list.length; j++) {
@@ -326,4 +336,16 @@ function formatResultMessage(titreCat, totalVol, totalPds, resultat) {
 function afficherMessage({ html }) {
   const zone = document.getElementById("message-resultat");
   zone.innerHTML = html;
+}
+
+/**
+ * Reset : remet à zéro tous les champs quantité et vide #message-resultat.
+ */
+function resetForm() {
+  produits.forEach((_, i) => {
+    const input = document.getElementById(`quantite-${i}`);
+    if (input) input.value = 0;
+  });
+  // Effacer la zone des résultats
+  document.getElementById("message-resultat").innerHTML = "";
 }
