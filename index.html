@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Container Calculator</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    table {
+      border-collapse: collapse;
+      margin-bottom: 1em;
+      width: 100%;
+    }
+    th, td {
+      border: 1px solid #aaa;
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #f0f0f0;
+    }
+    .btn-calculer {
+      padding: 10px 16px;
+      font-size: 1rem;
+      cursor: pointer;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+    }
+    .btn-calculer:hover {
+      background-color: #0056b3;
+    }
+    .message {
+      margin-top: 1em;
+      padding: 10px;
+      border-radius: 4px;
+      font-size: 0.95rem;
+    }
+    .message.categorie {
+      margin-bottom: 1em;
+      border-left: 4px solid #555;
+      background-color: #f9f9f9;
+    }
+    .message.titre {
+      font-weight: bold;
+      margin-bottom: 0.5em;
+    }
+    .message-item {
+      margin-left: 1em;
+    }
+  </style>
+</head>
+<body>
+  <h1>Container Calculator</h1>
+
+  <!-- 1. Tableau des produits -->
+  <section id="section-produits">
+    <h2>Quantités des produits</h2>
+    <table id="table-produits">
+      <thead>
+        <tr>
+          <th>Référence</th>
+          <th>Nom</th>
+          <th>Poids unitaire (kg)</th>
+          <th>Volume unitaire (m³)</th>
+          <th>Réfrigéré ?</th>
+          <th>Quantité</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- Les lignes seront injectées dynamiquement via main.js -->
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 2. Bouton de calcul -->
+  <section id="section-action">
+    <button id="btn-calculer" class="btn-calculer">Calculer le(s) conteneur(s) optimal(aux)</button>
+  </section>
+
+  <!-- 3. Zone de résultat -->
+  <section id="section-resultat">
+    <h2>Résultat</h2>
+    <div id="message-resultat"></div>
+  </section>
+
+  <!-- 4. Inclusion de main.js -->
+  <script src="main.js"></script>
+</body>
+</html>
